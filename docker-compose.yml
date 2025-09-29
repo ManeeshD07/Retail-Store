@@ -1,0 +1,80 @@
+services:
+  mongo:
+    image: mongo:7
+    ports: ["27017:27017"]
+    volumes: [mongo:/data/db]
+    # Add this healthcheck for Mongo
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  api:
+    build: ./backend
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB: retail
+      JWT_SECRET: devsecret
+    ports: ["5000:5000"]
+    # Update depends_on to check for service health
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:5000/api/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://api:5000/api
+        JWT_COOKIE_NAME: retail_token
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:5000/api
+      JWT_COOKIE_NAME: retail_token
+    ports: ["3000:3000"]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:3000 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # E2E runner using official Playwright image (includes browsers & deps)
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.47.0-jammy
+    working_dir: /work
+    # mount only the frontend (where playwright.config.ts + tests live)
+    volumes:
+      - ./frontend:/work:rw
+    environment:
+      E2E_BASE_URL: http://web:3000
+    entrypoint: ["/bin/bash","-lc"]
+    # use pnpm inside container, wait for web/api, then run tests
+    command: >
+      "corepack enable &&
+       pnpm i --frozen-lockfile &&
+       pnpm dlx wait-on http://web:3000 http://api:5000/api/health &&
+       pnpm dlx playwright test --reporter=line"
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  seed:
+    build: ./backend
+    command: ["python", "scripts/seed_db.py", "--mongo-uri", "mongodb://mongo:27017", "--db", "retail", "--drop-first"]
+    depends_on:
+      - mongo
+      - api
+
+volumes:
+  mongo:

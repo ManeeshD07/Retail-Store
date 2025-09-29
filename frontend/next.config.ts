@@ -1,0 +1,17 @@
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+  async rewrites() {
+    return process.env.NEXT_PUBLIC_API_URL?.includes("localhost")
+      ? [
+          {
+            source: "/api/:path*",
+            destination: `${process.env.NEXT_PUBLIC_API_URL}/:path*`,
+          },
+        ]
+      : [];
+  },
+};
+
+export default nextConfig;
